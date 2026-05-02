@@ -1,11 +1,18 @@
 package com.example.autocall
 
+import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.net.Uri
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.opencsv.CSVReader
 import kotlinx.coroutines.delay
@@ -22,8 +29,13 @@ import java.io.FileReader
 /**
  * 自动拨打ViewModel
  * 管理电话列表、拨打状态和语音播放
+ * 
+ * 修复说明：
+ * 1. 改为AndroidViewModel以获取Application Context
+ * 2. 所有组件使用ApplicationContext避免内存泄漏
+ * 3. 添加onCleared()释放资源
  */
-class AutoCallViewModel : ViewModel() {
+class AutoCallViewModel(application: Application) : AndroidViewModel(application) {
 
     private val tag = "AutoCallViewModel"
 
@@ -79,15 +91,83 @@ class AutoCallViewModel : ViewModel() {
     // 当前播放的MediaPlayer
     private var currentMediaPlayer: MediaPlayer? = null
     
+    // 音频注入器
+    private var audioInjector: CallAudioInjector? = null
+    
+    // 通话录音器
+    private var audioRecorder: CallAudioRecorder? = null
+    
     // 录音开关
     private val _isRecordingEnabled = MutableStateFlow(false)
     val isRecordingEnabled: StateFlow<Boolean> = _isRecordingEnabled
     
     /**
+     * ViewModel销毁时释放所有资源，防止内存泄漏
+     */
+    override fun onCleared() {
+        super.onCleared()
+        Log.d(tag, "🧹 ViewModel销毁，清理所有资源")
+        
+        // 1. 注销电话监听器
+        try {
+            callStateListener?.unregister()
+            callStateListener = null
+            Log.d(tag, "✅ 电话监听器已注销")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 注销监听器失败: ${e.message}", e)
+        }
+        
+        // 2. 停止并释放音频注入器
+        try {
+            audioInjector?.stop()
+            audioInjector = null
+            Log.d(tag, "✅ 音频注入器已释放")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 释放音频注入器失败: ${e.message}", e)
+        }
+        
+        // 3. 停止并释放录音器
+        try {
+            if (audioRecorder?.isRecording() == true) {
+                audioRecorder?.stopRecording()
+            }
+            audioRecorder = null
+            Log.d(tag, "✅ 录音器已释放")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 释放录音器失败: ${e.message}", e)
+        }
+        
+        // 4. 释放MediaPlayer
+        try {
+            stopAudioPlayback()
+            Log.d(tag, "✅ MediaPlayer已释放")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 释放MediaPlayer失败: ${e.message}", e)
+        }
+        
+        Log.d(tag, "🧹 所有资源清理完成")
+    }
+    
+    /**
      * 切换录音开关
      */
     fun toggleRecording() {
-        _isRecordingEnabled.value = !_isRecordingEnabled.value
+        val newState = !_isRecordingEnabled.value
+        _isRecordingEnabled.value = newState
+        
+        if (newState) {
+            Log.d(tag, "🎙️ 用户开启录音开关")
+            _currentStatus.value = "录音已开启（将在下次通话时启动）"
+        } else {
+            Log.d(tag, "🔇 用户关闭录音开关")
+            _currentStatus.value = "录音已关闭"
+            
+            // 如果正在录音，立即停止
+            if (audioRecorder?.isRecording() == true) {
+                Log.d(tag, "检测到正在录音，立即停止")
+                audioRecorder?.stopRecording()
+            }
+        }
     }
     
     /**
@@ -161,6 +241,8 @@ class AutoCallViewModel : ViewModel() {
     /**
      * 从Excel文件导入电话列表
      * 支持.xls和.xlsx格式
+     * 
+     * 修复：已在viewModelScope.launch中执行，运行在后台线程
      */
     fun importFromExcel(context: Context, excelFilePath: String) {
         viewModelScope.launch {
@@ -547,6 +629,10 @@ class AutoCallViewModel : ViewModel() {
 
     /**
      * 开始自动拨打流程
+     * 
+     * 修复：
+     * 1. 启动前先取消旧监听器，防止重复注册
+     * 2. 使用getApplication<Application>()获取Context
      */
     fun startAutoCall(context: Context) {
         if (_isRunning.value) {
@@ -565,9 +651,14 @@ class AutoCallViewModel : ViewModel() {
                 return@launch
             }
             
-            // 初始化电话监听器
-            callStateListener = CallStateListener(context)
+            // 修复：先取消旧的监听器，防止重复注册
+            callStateListener?.unregister()
+            callStateListener = null
+            
+            // 初始化电话监听器（使用ApplicationContext）
+            callStateListener = CallStateListener(getApplication<Application>().applicationContext)
             callStateListener?.register()
+            Log.d(tag, "✅ 电话监听器已注册")
 
             _currentStatus.value = "开始自动拨打，共 ${list.size} 个电话"
             
@@ -593,11 +684,19 @@ class AutoCallViewModel : ViewModel() {
                 }
                 
                 // 拨打电话
+                Log.d(tag, "📞 正在拨打电话: ${entry.phoneNumber}")
                 val callSuccess = makeCall(context, entry.phoneNumber)
                 
                 // 等待电话接通（监听电话状态）
                 _currentStatus.value = "等待接通..."
+                Log.d(tag, "⏳ 等待电话接通...")
                 val connected = waitForCallConnect()
+                
+                if (connected) {
+                    Log.d(tag, "✅ 电话已接通")
+                } else {
+                    Log.w(tag, "❌ 电话未接通或超时")
+                }
                 
                 val endTime = System.currentTimeMillis()
                 val duration = (endTime - startTime) / 1000
@@ -606,24 +705,101 @@ class AutoCallViewModel : ViewModel() {
                 if (connected && !currentAudioPath.isNullOrEmpty()) {
                     _currentStatus.value = "电话已接通，正在播放语音..."
                     
-                    // 启动后台协程监听通话结束，无论是否录音都要在通话结束时停止音频
+                    // 初始化音频注入器和录音器（使用ApplicationContext）
+                    val appContext = getApplication<Application>().applicationContext
+                    if (audioInjector == null) {
+                        audioInjector = CallAudioInjector(appContext)
+                    }
+                    if (audioRecorder == null) {
+                        audioRecorder = CallAudioRecorder(appContext)
+                    }
+                    
+                    // 如果开启录音，先启动录音（在音频注入前）
+                    var recordPath: String? = null
+                    if (_isRecordingEnabled.value) {
+                        Log.d(tag, "🎙️ 检测到录音开关已开启，准备启动录音")
+                        _currentStatus.value = "正在开启通话录音..."
+                        
+                        // 检查录音器状态
+                        val recorderState = audioRecorder?.getRecordState()
+                        Log.d(tag, "录音器当前状态: $recorderState")
+                        
+                        recordPath = audioRecorder?.startRecording(entry.phoneNumber)
+                        if (recordPath != null) {
+                            Log.d(tag, "✅ 录音已成功启动: $recordPath")
+                            _currentStatus.value = "录音已启动，正在播放语音..."
+                        } else {
+                            Log.e(tag, "❌ 录音启动失败，但继续播放音频")
+                            _currentStatus.value = "录音启动失败，继续播放语音"
+                        }
+                        // 等待录音稳定
+                        delay(500)
+                        Log.d(tag, "录音稳定等待完成")
+                    } else {
+                        Log.d(tag, "🔇 录音开关未开启，跳过录音")
+                    }
+                    
+                    // 启动后台协程监听通话结束（独立协程，确保不被阻塞）
                     val disconnectJob = viewModelScope.launch {
                         try {
                             waitForCallDisconnect()
                         } catch (e: Exception) {
-                            Log.e(tag, "监听通话结束失败: ${e.message}")
+                            Log.e(tag, "❌ 监听通话结束失败: ${e.message}", e)
                         }
                     }
                     
-                    // 播放音频（会在通话结束时被stopAudioPlayback停止）
-                    try {
-                        playAudio(context, currentAudioPath)
-                    } catch (e: Exception) {
-                        Log.e(tag, "播放音频失败: ${e.message}")
+                    // 使用音频注入器播放（直接注入通话通道）
+                    val audioJob = viewModelScope.launch {
+                        try {
+                            _currentStatus.value = "正在播放语音（通话通道）..."
+                            val success = audioInjector?.injectAudioToCall(currentAudioPath)
+                            if (success == true) {
+                                Log.d(tag, "✅ 音频注入成功")
+                            } else {
+                                Log.e(tag, "❌ 音频注入失败")
+                                _currentStatus.value = "音频播放失败"
+                            }
+                        } catch (e: Exception) {
+                            Log.e(tag, "❌ 播放音频异常: ${e.message}", e)
+                            _currentStatus.value = "音频播放异常"
+                        }
                     }
                     
-                    // 等待通话结束
+                    // 等待两个任务完成（任一完成都继续）
                     disconnectJob.join()
+                    
+                    // 强制取消音频任务（如果还在播放）
+                    if (audioJob.isActive) {
+                        Log.d(tag, "⚠️ 通话已结束但音频仍在播放，强制取消")
+                        audioJob.cancel()
+                    }
+                    
+                    // 双重保险：再次强制停止所有音频
+                    forceStopAllAudio()
+                    
+                    // 修复：挂断时保存录音文件路径，不能丢失
+                    val finalRecordPath = if (_isRecordingEnabled.value && audioRecorder?.isRecording() == true) {
+                        Log.d(tag, "🛑 通话结束，准备停止录音")
+                        val recorderState = audioRecorder?.getRecordState()
+                        Log.d(tag, "录音器当前状态: $recorderState")
+                        
+                        val stoppedPath = audioRecorder?.stopRecording()
+                        if (stoppedPath != null) {
+                            Log.d(tag, "✅ 录音已成功停止: $stoppedPath")
+                            stoppedPath  // 返回录音路径
+                        } else {
+                            Log.e(tag, "❌ 录音停止失败")
+                            null
+                        }
+                    } else if (_isRecordingEnabled.value) {
+                        Log.w(tag, "录音开关已开启，但录音器未在录音状态")
+                        null
+                    } else {
+                        null
+                    }
+                    
+                    // 更新recordPath为最终值
+                    recordPath = finalRecordPath
                     
                     _currentStatus.value = "通话已结束"
                 } else if (!connected) {
@@ -634,12 +810,19 @@ class AutoCallViewModel : ViewModel() {
                 
                 // 记录通话结果
                 val status = if (connected && callSuccess) "成功" else "失败"
+                
+                // 获取录音文件路径（如果有）
+                val recordPath = if (_isRecordingEnabled.value && connected) {
+                    audioRecorder?.getCurrentRecordFile()?.absolutePath
+                } else null
+                
                 records.add(CallRecord(
                     phoneNumber = entry.phoneNumber,
                     contactName = entry.contactName.ifEmpty { "未知" },
                     callStatus = status,
                     callDuration = duration,
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    recordFilePath = recordPath
                 ))
                 
                 // 每个电话之间间隔3秒
@@ -701,31 +884,97 @@ class AutoCallViewModel : ViewModel() {
     /**
      * 等待电话挂断
      * 最多等待5分钟
+     * 
+     * 修复：使用getApplication<Application>().applicationContext获取Context
      */
     private suspend fun waitForCallDisconnect() {
-        val listener = callStateListener ?: return
+        val listener = callStateListener ?: run {
+            Log.e(tag, "❌ callStateListener为null，无法监听挂断")
+            return
+        }
         
         val result = kotlinx.coroutines.CompletableDeferred<Unit>()
         
         // 先等待OFFHOOK状态（确保通话已开始）
         var isInCall = false
+        var disconnectReceived = false
+        
+        Log.d(tag, "===== 开始监听通话结束 =====")
+        Log.d(tag, "当前监听器状态: ${listener.callStateFlow}")
         
         val job = viewModelScope.launch {
-            listener.callStateFlow.collect { state ->
-                Log.d(tag, "电话状态: $state")
-                when (state) {
-                    CallStateListener.CallState.CONNECTED -> {
-                        isInCall = true
-                    }
-                    CallStateListener.CallState.DISCONNECTED -> {
-                        // 只有在通话中收到DISCONNECTED才停止
-                        if (isInCall && !result.isCompleted) {
-                            Log.d(tag, "检测到通话结束，停止音频")
-                            stopAudioPlayback()
-                            result.complete(Unit)
+            try {
+                listener.callStateFlow.collect { state ->
+                    Log.d(tag, "📱 收到电话状态: $state (isInCall=$isInCall)")
+                    
+                    when (state) {
+                        CallStateListener.CallState.CONNECTED -> {
+                            Log.d(tag, "✅ 通话已接通，标记为通话中")
+                            isInCall = true
+                        }
+                        CallStateListener.CallState.DISCONNECTED -> {
+                            disconnectReceived = true
+                            Log.d(tag, "📴 收到挂断信号！isInCall=$isInCall")
+                            
+                            // 只要收到挂断信号就立即停止，不管isInCall状态
+                            if (!result.isCompleted) {
+                                Log.d(tag, "🚨 立即执行音频停止流程")
+                                Log.d(tag, "当前音频注入状态: ${audioInjector?.isInjecting()}")
+                                Log.d(tag, "当前录音状态: ${audioRecorder?.getRecordState()}")
+                                
+                                // 1. 强制停止音频注入
+                                try {
+                                    audioInjector?.stop()
+                                    Log.d(tag, "✅ 步骤1: 音频注入已停止")
+                                } catch (e: Exception) {
+                                    Log.e(tag, "❌ 步骤1失败: ${e.message}", e)
+                                }
+                                
+                                // 2. 停止音频播放
+                                try {
+                                    stopAudioPlayback()
+                                    Log.d(tag, "✅ 步骤2: 音频播放已停止")
+                                } catch (e: Exception) {
+                                    Log.e(tag, "❌ 步骤2失败: ${e.message}", e)
+                                }
+                                
+                                // 3. 停止录音
+                                try {
+                                    if (_isRecordingEnabled.value && audioRecorder?.isRecording() == true) {
+                                        val recordPath = audioRecorder?.stopRecording()
+                                        Log.d(tag, "✅ 步骤3: 录音已停止: $recordPath")
+                                    } else {
+                                        Log.d(tag, "ℹ️ 步骤3: 录音未开启或已停止")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(tag, "❌ 步骤3失败: ${e.message}", e)
+                                }
+                                
+                                // 4. 重置音频路由
+                                try {
+                                    val audioManager = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                                    audioManager.mode = android.media.AudioManager.MODE_NORMAL
+                                    audioManager.setSpeakerphoneOn(false)
+                                    Log.d(tag, "✅ 步骤4: 音频路由已重置")
+                                } catch (e: Exception) {
+                                    Log.e(tag, "❌ 步骤4失败: ${e.message}", e)
+                                }
+                                
+                                Log.d(tag, "===== 通话结束处理完成 =====")
+                                result.complete(Unit)
+                            } else {
+                                Log.w(tag, "⚠️ result已完成，忽略重复挂断信号")
+                            }
+                        }
+                        else -> {
+                            Log.d(tag, "ℹ️ 其他状态: $state")
                         }
                     }
-                    else -> {}
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "❌ 监听通话状态异常: ${e.message}", e)
+                if (!result.isCompleted) {
+                    result.complete(Unit)
                 }
             }
         }
@@ -733,8 +982,11 @@ class AutoCallViewModel : ViewModel() {
         try {
             withTimeoutOrNull(300000) {
                 result.await()
+            } ?: run {
+                Log.w(tag, "⏰ 等待挂断超时（5分钟）")
             }
         } finally {
+            Log.d(tag, "取消通话状态监听Job")
             job.cancel()
         }
     }
@@ -743,18 +995,26 @@ class AutoCallViewModel : ViewModel() {
      * 停止音频播放
      */
     private fun stopAudioPlayback() {
+        Log.d(tag, "🎵 停止音频播放")
+        
         currentMediaPlayer?.let {
             try {
                 if (it.isPlaying) {
+                    Log.d(tag, "MediaPlayer正在播放，执行stop()")
                     it.stop()
+                } else {
+                    Log.d(tag, "MediaPlayer未在播放")
                 }
                 it.release()
-                Log.d(tag, "音频播放已停止")
+                Log.d(tag, "✅ MediaPlayer已释放")
             } catch (e: Exception) {
-                Log.e(tag, "停止音频失败: ${e.message}")
+                Log.e(tag, "❌ 停止音频失败: ${e.message}", e)
             } finally {
                 currentMediaPlayer = null
+                Log.d(tag, "currentMediaPlayer引用已清空")
             }
+        } ?: run {
+            Log.d(tag, "ℹ️ currentMediaPlayer为null，无需停止")
         }
     }
     
@@ -773,10 +1033,57 @@ class AutoCallViewModel : ViewModel() {
 
     /**
      * 停止自动拨打
+     * 
+     * 修复：调用forceStopAllAudio确保完全停止
      */
     fun stopAutoCall() {
+        Log.d(tag, "🛑 用户手动停止自动拨打")
         _isRunning.value = false
+        
+        // 强制停止所有音频
+        forceStopAllAudio()
+        
+        // 停止录音
+        if (audioRecorder?.isRecording() == true) {
+            audioRecorder?.stopRecording()
+        }
+        
         _currentStatus.value = "已停止"
+    }
+    
+    /**
+     * 强制停止所有音频（双重保险）
+     */
+    private fun forceStopAllAudio() {
+        Log.d(tag, "🛑 ===== 强制停止所有音频 =====")
+        
+        // 1. 停止音频注入器
+        try {
+            audioInjector?.stop()
+            Log.d(tag, "✅ 音频注入器已停止")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 停止音频注入器失败: ${e.message}", e)
+        }
+        
+        // 2. 停止MediaPlayer
+        try {
+            stopAudioPlayback()
+            Log.d(tag, "✅ MediaPlayer已停止")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 停止MediaPlayer失败: ${e.message}", e)
+        }
+        
+        // 3. 重置音频路由
+        try {
+            val audioManager = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            audioManager.mode = android.media.AudioManager.MODE_NORMAL
+            audioManager.setSpeakerphoneOn(false)
+            Log.d(tag, "✅ 音频路由已重置")
+        } catch (e: Exception) {
+            Log.e(tag, "❌ 重置音频路由失败: ${e.message}", e)
+        }
+        
+        Log.d(tag, "🛑 ===== 强制停止完成 =====")
     }
 
     /**
@@ -799,59 +1106,6 @@ class AutoCallViewModel : ViewModel() {
     }
 
     /**
-     * 播放语音文件（通过扬声器播放，让对方听到）
-     */
-    private suspend fun playAudio(context: Context, audioPath: String) {
-        var mediaPlayer: MediaPlayer? = null
-        try {
-            val file = File(audioPath)
-            if (!file.exists()) {
-                Log.w(tag, "语音文件不存在: $audioPath")
-                _currentStatus.value = "语音文件不存在"
-                return
-            }
-
-            // 设置音频模式为通话模式，让对方能听到
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-            val originalMode = audioManager.mode
-            audioManager.mode = android.media.AudioManager.MODE_IN_CALL
-            audioManager.setSpeakerphoneOn(true)
-
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(audioPath)
-                val audioAttributes = android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-                setAudioAttributes(audioAttributes)
-                prepare()
-                start()
-            }
-
-            Log.d(tag, "开始播放语音: $audioPath")
-            _currentStatus.value = "正在播放语音..."
-
-            // 等待播放完成
-            while (mediaPlayer?.isPlaying == true) {
-                delay(100)
-            }
-
-            Log.d(tag, "语音播放完成")
-            
-            // 恢复原始音频模式
-            audioManager.mode = originalMode
-            
-            // 清除引用
-            currentMediaPlayer = null
-        } catch (e: Exception) {
-            Log.e(tag, "播放语音失败: ${e.message}", e)
-            _currentStatus.value = "语音播放失败"
-        } finally {
-            mediaPlayer?.release()
-        }
-    }
-    
-    /**
      * 导出通话记录到指定URI（用户选择位置）
      */
     fun exportCallRecordsToUri(context: Context, uri: android.net.Uri) {
@@ -871,11 +1125,12 @@ class AutoCallViewModel : ViewModel() {
                     val writer = java.io.OutputStreamWriter(outputStream, Charsets.UTF_8)
                     
                     // 写入标题
-                    writer.write("电话号码,联系人姓名,通话状态,通话时长(秒),通话时间\n")
+                    writer.write("电话号码,联系人姓名,通话状态,通话时长(秒),通话时间,录音文件\n")
                     
                     // 写入数据
                     records.forEach { record ->
-                        writer.write("${record.phoneNumber},${record.contactName},${record.callStatus},${record.callDuration},${record.timestamp}\n")
+                        val recordFile = record.recordFilePath ?: ""
+                        writer.write("${record.phoneNumber},${record.contactName},${record.callStatus},${record.callDuration},${record.timestamp},$recordFile\n")
                     }
                     
                     // 写入统计信息

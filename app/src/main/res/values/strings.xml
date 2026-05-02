@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">AUTO call</string>
+    <string name="accessibility_service_description">自动电话拨打辅助服务，用于自动接听电话和切换免提模式</string>
 </resources>

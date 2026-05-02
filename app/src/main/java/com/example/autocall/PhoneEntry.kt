@@ -19,11 +19,13 @@ data class PhoneEntry(
  * @param callStatus 通话状态（成功/失败/未接通）
  * @param callDuration 通话时长（秒）
  * @param timestamp 通话时间戳
+ * @param recordFilePath 录音文件路径（可选）
  */
 data class CallRecord(
     val phoneNumber: String,
     val contactName: String,
     val callStatus: String,
     val callDuration: Long,
-    val timestamp: String
+    val timestamp: String,
+    val recordFilePath: String? = null
 )

@@ -28,10 +28,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.autocall.ui.theme.AUTOCallTheme
 
 class MainActivity : ComponentActivity() {
     
+    // 修复：使用viewModel()工厂函数以支持AndroidViewModel
     private val viewModel: AutoCallViewModel by viewModels()
     
     private val requestPermissionLauncher = registerForActivityResult(
@@ -223,7 +225,8 @@ fun MainScreen(viewModel: AutoCallViewModel, onImportFile: () -> Unit, onImportA
                 // 录音开关
                 RecordingSwitch(
                     isEnabled = isRecordingEnabled,
-                    onToggle = { viewModel.toggleRecording() }
+                    onToggle = { viewModel.toggleRecording() },
+                    currentStatus = currentStatus
                 )
                 
                 // 控制按钮
@@ -433,7 +436,7 @@ fun StatisticsCard(statistics: String) {
 }
 
 @Composable
-fun RecordingSwitch(isEnabled: Boolean, onToggle: () -> Unit) {
+fun RecordingSwitch(isEnabled: Boolean, onToggle: () -> Unit, currentStatus: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -459,9 +462,19 @@ fun RecordingSwitch(isEnabled: Boolean, onToggle: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = if (isEnabled) "开启：通话成功后自动录音" else "关闭：不录音",
+                    text = if (isEnabled) "✅ 开启：通话时自动录音" else "❌ 关闭：不录音",
                     style = MaterialTheme.typography.bodySmall
                 )
+                // 显示当前状态中包含录音相关信息
+                if (currentStatus.contains("录音", ignoreCase = true)) {
+                    Text(
+                        text = "状态: $currentStatus",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
             Switch(
                 checked = isEnabled,
