@@ -1,6 +1,6 @@
 # 自动电话拨打系统 (AUTOcall)
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![Android](https://img.shields.io/badge/Android-9%2B-green)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9%2B-purple)
 
@@ -9,18 +9,6 @@
 **GitHub**: https://github.com/coolzhang6666/AUTOcall
 
 ---
-
-## 📋 目录
-
-- [核心功能](#核心功能)
-- [技术架构](#技术架构)
-- [权限配置](#权限配置)
-- [使用方法](#使用方法)
-- [故障排查](#故障排查)
-- [更新日志](#更新日志)
-
----
-
 ## ✅ 核心功能
 
 ### 1. Excel批量拨号
@@ -347,5 +335,48 @@ adb logcat | grep "❌"
 
 ---
 
-**开发者**: AUTOcall Team  
+## 🆕 支持与更新
+
+### 获取最新版本
+- **GitHub Releases**: https://github.com/coolzhang6666/AUTOcall/releases
+- **当前版本**: v1.2.0 (2026-05-02)
+- **更新频率**: 根据用户反馈和功能需求不定期更新
+
+### 问题反馈
+如果您遇到问题或有建议，请通过以下方式联系我们：
+
+1. **GitHub Issues**（推荐）
+   - 访问: https://github.com/coolzhang6666/AUTOcall/issues
+   - 提交Bug报告或功能建议
+   - 附上详细的错误日志和复现步骤
+
+2. **Bilibili主页**
+   - 开发者: 张昊沅
+   - 主页: https://space.bilibili.com/1414910921
+   - 可以私信或评论区留言
+
+### 贡献代码
+欢迎提交 Pull Request！贡献前请确保：
+- ✅ 代码符合Kotlin规范
+- ✅ 添加必要的注释
+- ✅ 测试功能正常工作
+- ✅ 更新相关文档
+
+### 版本历史
+- **v1.2.0** - CallAudioInjector重构、稳定性提升
+- **v1.1.0** - 录音功能优化、内存泄漏修复
+- **v1.0.0** - 基础功能发布
+
+### 常见问题
+**Q: 如何知道是否有新版本？**  
+A: 关注GitHub仓库的Release页面，新版本会在那里发布。
+
+**Q: 旧版本数据会丢失吗？**  
+A: 不会。升级时通话记录、音频文件等数据都会保留。
+
+**Q: 可以请求新功能吗？**  
+A: 可以！请在GitHub Issues中提出，我们会评估后考虑加入。
+
+---
+
 **GitHub**: https://github.com/coolzhang6666/AUTOcall
