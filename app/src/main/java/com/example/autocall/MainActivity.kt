@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -148,6 +149,8 @@ fun MainScreen(
     val statistics by viewModel.statistics.collectAsState()
     val callRecords by viewModel.callRecords.collectAsState()
     val isRecordingEnabled by viewModel.isRecordingEnabled.collectAsState()
+    val isAudioPlaybackEnabled by viewModel.isAudioPlaybackEnabled.collectAsState()
+    val sortByBalance by viewModel.sortByBalance.collectAsState()
 
     var showAboutDialog by remember { mutableStateOf(false) }
 
@@ -187,11 +190,18 @@ fun MainScreen(
             ) {
                 StatusCard(status = currentStatus, progress = progress, total = phoneList.size)
 
-                // 修复：音频选择器现在能响应式更新
-                AudioSelector(
-                    viewModel = viewModel,
-                    selectedIndex = selectedAudioIndex
+                AudioPlaybackSwitch(
+                    isEnabled = isAudioPlaybackEnabled,
+                    onToggle = { viewModel.toggleAudioPlayback() },
+                    currentStatus = currentStatus
                 )
+
+                if (isAudioPlaybackEnabled) {
+                    AudioSelector(
+                        viewModel = viewModel,
+                        selectedIndex = selectedAudioIndex
+                    )
+                }
 
                 RecordingSwitch(
                     isEnabled = isRecordingEnabled,
@@ -213,7 +223,32 @@ fun MainScreen(
                     fontWeight = FontWeight.Bold
                 )
 
-                PhoneList(phoneList = phoneList)
+                // 余额排序按钮
+                if (phoneList.any { !it.balance.isNullOrEmpty() }) {
+                    val sortText = when (sortByBalance) {
+                        0 -> "按余额排序"
+                        1 -> "✓ 从小到大"
+                        2 -> "✓ 从大到小"
+                        else -> "按余额排序"
+                    }
+                    FilterChip(
+                        selected = sortByBalance != 0,
+                        onClick = { viewModel.toggleSortByBalance() },
+                        label = { Text(sortText) },
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+
+                PhoneList(
+                    phoneList = phoneList,
+                    onPhoneClick = { entry ->
+                        val intent = Intent(Intent.ACTION_CALL).apply {
+                            data = Uri.parse("tel:${entry.phoneNumber}")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    }
+                )
 
                 if (statistics.isNotEmpty()) {
                     StatisticsCard(statistics = statistics)
@@ -242,7 +277,7 @@ fun MainScreen(
                     Text("自动电话拨打系统")
 
                     Text(
-                        text = "版本: 1.0.0",
+                        text = "版本: 1.3.0",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/coolzhang6666/AUTOcall"))
@@ -252,7 +287,7 @@ fun MainScreen(
                     )
 
                     Text(
-                        text = "开发者: 张昊沅",
+                        text = "开发者: coolzhang6666",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://space.bilibili.com/1414910921?spm_id_from=333.1007.0.0"))
@@ -385,6 +420,39 @@ fun RecordingSwitch(isEnabled: Boolean, onToggle: () -> Unit, currentStatus: Str
 }
 
 @Composable
+fun AudioPlaybackSwitch(isEnabled: Boolean, onToggle: () -> Unit, currentStatus: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isEnabled) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("音频播放", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    if (isEnabled) "✅ 开启：通话时自动播放音频" else "❌ 关闭：不播放音频",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (currentStatus.contains("音频播放", ignoreCase = true)) {
+                    Text(
+                        "状态: $currentStatus",
+                        style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+            Switch(checked = isEnabled, onCheckedChange = { onToggle() })
+        }
+    }
+}
+
+@Composable
 fun ExportButton(onExport: () -> Unit) {
     Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
         Text("导出通话记录")
@@ -423,7 +491,7 @@ fun ControlButtons(
 }
 
 @Composable
-fun PhoneList(phoneList: List<PhoneEntry>) {
+fun PhoneList(phoneList: List<PhoneEntry>, onPhoneClick: (PhoneEntry) -> Unit = {}) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -439,7 +507,7 @@ fun PhoneList(phoneList: List<PhoneEntry>) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(phoneList) { entry ->
-                    PhoneItem(entry)
+                    PhoneItem(entry, onClick = { onPhoneClick(entry) })
                 }
             }
         }
@@ -447,9 +515,9 @@ fun PhoneList(phoneList: List<PhoneEntry>) {
 }
 
 @Composable
-fun PhoneItem(entry: PhoneEntry) {
+fun PhoneItem(entry: PhoneEntry, onClick: () -> Unit = {}) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
@@ -466,11 +534,24 @@ fun PhoneItem(entry: PhoneEntry) {
                     entry.phoneNumber,
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary
                 )
-                Text(
-                    if (entry.audioFilePath != null) "✓ 有语音" else "✗ 无语音",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (entry.audioFilePath != null) Color.Green else Color.Gray
-                )
+                
+                // 显示户号信息
+                if (!entry.accountNumber.isNullOrEmpty()) {
+                    Text(
+                        "户号: ${entry.accountNumber}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                // 显示余额信息
+                if (!entry.balance.isNullOrEmpty()) {
+                    Text(
+                        "余额: ${entry.balance}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }

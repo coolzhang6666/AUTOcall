@@ -5,11 +5,15 @@ package com.example.autocall
  * @param phoneNumber 电话号码
  * @param contactName 联系人姓名（可选）
  * @param audioFilePath 语音文件路径（可选，为空则不播放）
+ * @param accountNumber 户号（可选）
+ * @param balance 余额信息（可选）
  */
 data class PhoneEntry(
     val phoneNumber: String,
     val contactName: String = "",
-    val audioFilePath: String? = null
+    val audioFilePath: String? = null,
+    val accountNumber: String? = null,
+    val balance: String? = null
 )
 
 /**

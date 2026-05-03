@@ -60,6 +60,12 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
     private val _isRecordingEnabled = MutableStateFlow(false)
     val isRecordingEnabled: StateFlow<Boolean> = _isRecordingEnabled
 
+    private val _isAudioPlaybackEnabled = MutableStateFlow(false)
+    val isAudioPlaybackEnabled: StateFlow<Boolean> = _isAudioPlaybackEnabled
+
+    private val _sortByBalance = MutableStateFlow(0) // 0: 不排序, 1: 从小到大, 2: 从大到小
+    val sortByBalance: StateFlow<Int> = _sortByBalance
+
     fun toggleRecording() {
         val newState = !_isRecordingEnabled.value
         _isRecordingEnabled.value = newState
@@ -70,6 +76,64 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
             if (audioRecorder?.isRecording() == true) {
                 audioRecorder?.stopRecording()
             }
+        }
+    }
+
+    fun toggleAudioPlayback() {
+        val newState = !_isAudioPlaybackEnabled.value
+        _isAudioPlaybackEnabled.value = newState
+        if (newState) {
+            _currentStatus.value = "音频播放已开启（将在下次通话时播放）"
+        } else {
+            _currentStatus.value = "音频播放已关闭"
+        }
+    }
+
+    fun toggleSortByBalance() {
+        // 循环切换：0(不排序) -> 1(从小到大) -> 2(从大到小) -> 0(不排序)
+        _sortByBalance.value = (_sortByBalance.value + 1) % 3
+        sortPhoneList()
+        when (_sortByBalance.value) {
+            0 -> _currentStatus.value = "已取消排序"
+            1 -> _currentStatus.value = "已按余额从小到大排序"
+            2 -> _currentStatus.value = "已按余额从大到小排序"
+        }
+    }
+
+    private fun sortPhoneList() {
+        val currentList = _phoneList.value.toMutableList()
+        when (_sortByBalance.value) {
+            0 -> {
+                // 不排序，保持原顺序（这里不做任何操作）
+            }
+            1 -> {
+                // 从小到大排序
+                currentList.sortWith { a, b ->
+                    val balanceA = parseBalance(a.balance)
+                    val balanceB = parseBalance(b.balance)
+                    balanceA.compareTo(balanceB)
+                }
+            }
+            2 -> {
+                // 从大到小排序
+                currentList.sortWith { a, b ->
+                    val balanceA = parseBalance(a.balance)
+                    val balanceB = parseBalance(b.balance)
+                    balanceB.compareTo(balanceA)
+                }
+            }
+        }
+        _phoneList.value = currentList
+    }
+
+    private fun parseBalance(balance: String?): Double {
+        if (balance.isNullOrEmpty()) return Double.MAX_VALUE // 无余额的排到最后
+        return try {
+            // 提取数字部分，去除可能的单位
+            val numberStr = balance.replace(Regex("[^0-9.-]"), "")
+            numberStr.toDoubleOrNull() ?: Double.MAX_VALUE
+        } catch (e: Exception) {
+            Double.MAX_VALUE
         }
     }
 
@@ -135,12 +199,14 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                 val phoneList = mutableListOf<PhoneEntry>()
                 val firstRow = sheet.getRow(0)
                 var startIndex = 0
-                var phoneCol = 0; var nameCol = 1; var audioCol = 2
+                var phoneCol = 0; var nameCol = 1; var audioCol = 2; var accountNumberCol = -1; var balanceCol = -1
                 if (firstRow != null) {
                     val map = detectColumnHeaders(firstRow)
                     phoneCol = map["phone"] ?: 0
                     nameCol = map["name"] ?: 1
                     audioCol = map["audio"] ?: 2
+                    accountNumberCol = map["accountNumber"] ?: -1
+                    balanceCol = map["balance"] ?: -1
                     if (map.isNotEmpty()) startIndex = 1
                 }
                 for (i in startIndex..sheet.lastRowNum) {
@@ -150,7 +216,9 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                     val name = getCellValue(row.getCell(nameCol))?.trim() ?: ""
                     val audioName = if (audioCol < row.physicalNumberOfCells) getCellValue(row.getCell(audioCol))?.trim() else null
                     val audioPath = if (!audioName.isNullOrEmpty()) getAudioPath(context, audioName) else null
-                    phoneList.add(PhoneEntry(phone, name, audioPath))
+                    val accountNumber = if (accountNumberCol >= 0 && accountNumberCol < row.physicalNumberOfCells) getCellValue(row.getCell(accountNumberCol))?.trim() else null
+                    val balance = if (balanceCol >= 0 && balanceCol < row.physicalNumberOfCells) getCellValue(row.getCell(balanceCol))?.trim() else null
+                    phoneList.add(PhoneEntry(phone, name, audioPath, accountNumber, balance))
                 }
                 workbook.close()
                 inputStream.close()
@@ -183,16 +251,38 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                 }
                 val phoneList = mutableListOf<PhoneEntry>()
                 val firstRow = allRows[0]
-                val startIndex = if (firstRow.isNotEmpty() &&
-                    (firstRow[0].equals("电话", ignoreCase = true) || firstRow[0].equals("phoneNumber", ignoreCase = true))) 1 else 0
+                var startIndex = 0
+                var phoneCol = 0; var nameCol = 1; var audioCol = 2; var accountNumberCol = -1; var balanceCol = -1
+                
+                // 检测列标题
+                if (firstRow.isNotEmpty()) {
+                    val phoneKeywords = listOf("电话", "手机", "手机号", "phone", "tel")
+                    val nameKeywords = listOf("姓名", "联系人", "name", "contact")
+                    val audioKeywords = listOf("语音", "音频", "audio", "voice")
+                    val accountNumberKeywords = listOf("户号", "账号", "账户", "account")
+                    val balanceKeywords = listOf("余额", "金额", "balance")
+                    
+                    for ((index, header) in firstRow.withIndex()) {
+                        val lowerHeader = header.lowercase()
+                        if (phoneKeywords.any { it in lowerHeader }) phoneCol = index
+                        else if (nameKeywords.any { it in lowerHeader }) nameCol = index
+                        else if (audioKeywords.any { it in lowerHeader }) audioCol = index
+                        else if (accountNumberKeywords.any { it in lowerHeader }) accountNumberCol = index
+                        else if (balanceKeywords.any { it in lowerHeader }) balanceCol = index
+                    }
+                    startIndex = 1
+                }
+                
                 for (i in startIndex until allRows.size) {
                     val row = allRows[i]
-                    if (row.isNotEmpty() && row[0].isNotBlank()) {
-                        val phone = row[0].trim()
-                        val name = if (row.size > 1) row[1].trim() else ""
-                        val audioName = if (row.size > 2 && row[2].isNotBlank()) row[2].trim() else null
+                    if (row.isNotEmpty() && row.size > phoneCol && row[phoneCol].isNotBlank()) {
+                        val phone = row[phoneCol].trim()
+                        val name = if (row.size > nameCol) row[nameCol].trim() else ""
+                        val audioName = if (row.size > audioCol && audioCol >= 0 && row[audioCol].isNotBlank()) row[audioCol].trim() else null
                         val audioPath = audioName?.let { getAudioPath(context, it) }
-                        phoneList.add(PhoneEntry(phone, name, audioPath))
+                        val accountNumber = if (accountNumberCol >= 0 && row.size > accountNumberCol && row[accountNumberCol].isNotBlank()) row[accountNumberCol].trim() else null
+                        val balance = if (balanceCol >= 0 && row.size > balanceCol && row[balanceCol].isNotBlank()) row[balanceCol].trim() else null
+                        phoneList.add(PhoneEntry(phone, name, audioPath, accountNumber, balance))
                     }
                 }
                 withContext(Dispatchers.Main) {
@@ -211,11 +301,15 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
         val phoneKeywords = listOf("电话", "手机", "手机号", "联系方式", "联系电话", "号码", "phone", "tel", "telephone", "mobile", "cell")
         val nameKeywords = listOf("姓名", "联系人", "名字", "称呼", "name", "contact", "person")
         val audioKeywords = listOf("语音", "音频", "录音", "文件", "audio", "voice", "sound", "file")
+        val accountNumberKeywords = listOf("户号", "账号", "账户", "account", "account number", "user id")
+        val balanceKeywords = listOf("余额", "金额", "余额(元)", "balance", "amount", "money")
         for (i in 0 until row.physicalNumberOfCells) {
             val cellValue = row.getCell(i)?.toString()?.trim()?.lowercase() ?: continue
             if (phoneKeywords.any { it in cellValue }) map["phone"] = i
             else if (nameKeywords.any { it in cellValue }) map["name"] = i
             else if (audioKeywords.any { it in cellValue }) map["audio"] = i
+            else if (accountNumberKeywords.any { it in cellValue }) map["accountNumber"] = i
+            else if (balanceKeywords.any { it in cellValue }) map["balance"] = i
         }
         return map
     }
