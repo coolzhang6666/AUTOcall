@@ -59,6 +59,8 @@ dependencies {
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     // 电话状态监听
     implementation("androidx.core:core-ktx:1.12.0")
+    // JSON序列化库
+    implementation("com.google.code.gson:gson:2.10.1")
     
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

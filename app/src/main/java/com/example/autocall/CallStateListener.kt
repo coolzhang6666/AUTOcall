@@ -17,6 +17,7 @@ class CallStateListener(private val context: Context) {
     @Volatile private var isRegistered = false
 
     private val receiver = object : BroadcastReceiver() {
+        @Suppress("DEPRECATION")
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
             val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)

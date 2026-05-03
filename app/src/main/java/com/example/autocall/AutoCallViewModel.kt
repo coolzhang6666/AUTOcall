@@ -1,5 +1,6 @@
 package com.example.autocall
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -16,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import org.apache.poi.ss.usermodel.*
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.*
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 class AutoCallViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -47,7 +50,6 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
     val selectedAudioIndex: StateFlow<Int> = _selectedAudioIndex
 
     private val _callRecords = MutableStateFlow<List<CallRecord>>(emptyList())
-    val callRecords: StateFlow<List<CallRecord>> = _callRecords
 
     private val _statistics = MutableStateFlow("")
     val statistics: StateFlow<String> = _statistics
@@ -63,8 +65,19 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
     private val _isAudioPlaybackEnabled = MutableStateFlow(false)
     val isAudioPlaybackEnabled: StateFlow<Boolean> = _isAudioPlaybackEnabled
 
-    private val _sortByBalance = MutableStateFlow(0) // 0: 不排序, 1: 从小到大, 2: 从大到小
+    private val _sortByBalance = MutableStateFlow(1) // 0: 不排序, 1: 从小到大, 2: 从大到小
     val sortByBalance: StateFlow<Int> = _sortByBalance
+
+    private val _sortByCallCount = MutableStateFlow(1) // 0: 不排序, 1: 从小到大, 2: 从大到小
+    val sortByCallCount: StateFlow<Int> = _sortByCallCount
+
+    private val prefs by lazy {
+        getApplication<Application>().getSharedPreferences("app_data", Context.MODE_PRIVATE)
+    }
+
+    init {
+        loadData()
+    }
 
     fun toggleRecording() {
         val newState = !_isRecordingEnabled.value
@@ -94,18 +107,42 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
         _sortByBalance.value = (_sortByBalance.value + 1) % 3
         sortPhoneList()
         when (_sortByBalance.value) {
-            0 -> _currentStatus.value = "已取消排序"
+            0 -> _currentStatus.value = "已取消余额排序"
             1 -> _currentStatus.value = "已按余额从小到大排序"
             2 -> _currentStatus.value = "已按余额从大到小排序"
         }
     }
 
+    fun toggleSortByCallCount() {
+        // 循环切换：0(不排序) -> 1(从小到大) -> 2(从大到小) -> 0(不排序)
+        _sortByCallCount.value = (_sortByCallCount.value + 1) % 3
+        sortPhoneList()
+        when (_sortByCallCount.value) {
+            0 -> _currentStatus.value = "已取消拨打次数排序"
+            1 -> _currentStatus.value = "已按拨打次数从小到大排序"
+            2 -> _currentStatus.value = "已按拨打次数从大到小排序"
+        }
+    }
+
     private fun sortPhoneList() {
         val currentList = _phoneList.value.toMutableList()
-        when (_sortByBalance.value) {
-            0 -> {
-                // 不排序，保持原顺序（这里不做任何操作）
+        
+        // 先按拨打次数排序
+        when (_sortByCallCount.value) {
+            0 -> { /* 不排序 */ }
+            1 -> {
+                // 从小到大排序
+                currentList.sortWith { a, b -> a.callCount.compareTo(b.callCount) }
             }
+            2 -> {
+                // 从大到小排序
+                currentList.sortWith { a, b -> b.callCount.compareTo(a.callCount) }
+            }
+        }
+        
+        // 再按余额排序（如果拨打次数相同）
+        when (_sortByBalance.value) {
+            0 -> { /* 不排序 */ }
             1 -> {
                 // 从小到大排序
                 currentList.sortWith { a, b ->
@@ -123,6 +160,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                 }
             }
         }
+        
         _phoneList.value = currentList
     }
 
@@ -132,9 +170,35 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
             // 提取数字部分，去除可能的单位
             val numberStr = balance.replace(Regex("[^0-9.-]"), "")
             numberStr.toDoubleOrNull() ?: Double.MAX_VALUE
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             Double.MAX_VALUE
         }
+    }
+
+    private fun markAsCalled(index: Int) {
+        val currentList = _phoneList.value.toMutableList()
+        if (index in currentList.indices) {
+            val entry = currentList[index]
+            currentList[index] = entry.copy(isCalled = true, callCount = entry.callCount + 1)
+            _phoneList.value = currentList
+        }
+    }
+
+    fun markAsCalledManually(phoneNumber: String) {
+        val currentList = _phoneList.value.toMutableList()
+        val index = currentList.indexOfFirst { it.phoneNumber == phoneNumber }
+        if (index != -1) {
+            val entry = currentList[index]
+            currentList[index] = entry.copy(isCalled = true, callCount = entry.callCount + 1)
+            _phoneList.value = currentList
+            saveData()
+        }
+    }
+
+    fun clearPhoneList() {
+        _phoneList.value = emptyList()
+        _currentStatus.value = "列表已清空"
+        saveData()
     }
 
     fun setAudioDirectory(context: Context, directoryPath: String) {
@@ -225,6 +289,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                 withContext(Dispatchers.Main) {
                     _phoneList.value = phoneList
                     _currentStatus.value = "成功导入 ${phoneList.size} 个电话"
+                    saveData()
                 }
             } catch (e: Exception) {
                 Log.e(tag, "导入Excel失败: ${e.message}")
@@ -288,6 +353,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                 withContext(Dispatchers.Main) {
                     _phoneList.value = phoneList
                     _currentStatus.value = "成功导入 ${phoneList.size} 个电话"
+                    saveData()
                 }
             } catch (e: Exception) {
                 Log.e(tag, "导入CSV失败: ${e.message}")
@@ -322,7 +388,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
         else if (cleaned.startsWith("0") && cleaned.length == 12) cleaned = cleaned.substring(1)
         if (cleaned.matches(Regex("^1[3-9]\\d{9}$")) || cleaned.matches(Regex("^0\\d{2,3}\\d{7,8}$")) || cleaned.matches(Regex("^\\d{7,15}$")))
             return cleaned
-        return if (cleaned.isNotEmpty()) cleaned else null
+        return cleaned.ifEmpty { null }
     }
 
     private fun getCellValue(cell: Cell?): String? {
@@ -437,33 +503,41 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                 val connected = waitForCallConnect()
 
                 var recordPath: String? = null
-                if (connected && !audioPath.isNullOrEmpty()) {
-                    _currentStatus.value = "电话已接通，播放语音..."
+                if (connected) {
+                    // 初始化音频注入器和录音器
                     if (audioInjector == null) audioInjector = CallAudioInjector(getApplication())
                     if (audioRecorder == null) audioRecorder = CallAudioRecorder(getApplication())
 
+                    // 启动录音（如果开启）
                     if (_isRecordingEnabled.value) {
                         recordPath = audioRecorder?.startRecording(entry.phoneNumber)
-                        _currentStatus.value = "录音已启动，正在播放..."
+                        _currentStatus.value = "录音已启动"
                         delay(500)
                     }
 
-                    val disconnectJob = viewModelScope.launch { waitForCallDisconnect() }
-                    val audioJob = viewModelScope.launch { audioInjector?.injectAudioToCall(audioPath) }
+                    // 播放音频（如果开启且存在音频文件）
+                    if (_isAudioPlaybackEnabled.value && !audioPath.isNullOrEmpty()) {
+                        _currentStatus.value = "电话已接通，播放语音..."
+                        val disconnectJob = viewModelScope.launch { waitForCallDisconnect() }
+                        val audioJob = viewModelScope.launch { audioInjector?.injectAudioToCall(audioPath) }
 
-                    disconnectJob.join()
-                    audioJob.cancel()
-                    audioInjector?.stop()
-                    stopAudioPlayback()
+                        disconnectJob.join()
+                        audioJob.cancel()
+                        audioInjector?.stop()
+                        stopAudioPlayback()
+                    } else {
+                        // 不播放音频，只等待挂断
+                        _currentStatus.value = "电话已接通（未播放音频）"
+                        waitForCallDisconnect()
+                    }
 
+                    // 停止录音（如果开启）
                     if (_isRecordingEnabled.value && audioRecorder?.isRecording() == true) {
                         recordPath = audioRecorder?.stopRecording()
                     }
                     _currentStatus.value = "通话结束"
-                } else if (!connected) {
-                    _currentStatus.value = "未接通，跳过播放"
                 } else {
-                    _currentStatus.value = "无语音文件，跳过播放"
+                    _currentStatus.value = "未接通，跳过播放"
                 }
 
                 val status = if (connected && callSuccess) "成功" else "失败"
@@ -475,6 +549,10 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                     timestamp = timestamp,
                     recordFilePath = recordPath
                 ))
+                
+                // 标记为已拨打
+                markAsCalled(index)
+                
                 delay(3000)
             }
 
@@ -506,6 +584,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    @Suppress("DEPRECATION")
     private suspend fun waitForCallDisconnect() {
         val listener = callStateListener ?: return
         val result = CompletableDeferred<Unit>()
@@ -519,7 +598,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
                             audioRecorder?.stopRecording()
                         }
                         // 重置音频模式
-                        val am = getApplication<android.app.Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                        val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
                         am.mode = AudioManager.MODE_NORMAL
                         am.setSpeakerphoneOn(false)
                         result.complete(Unit)
@@ -557,6 +636,7 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
         _currentStatus.value = "已停止"
     }
 
+    @SuppressLint("UseKtx")
     private fun makeCall(context: Context, phoneNumber: String): Boolean {
         return try {
             val intent = Intent(Intent.ACTION_CALL).apply {
@@ -580,26 +660,49 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
     fun exportCallRecordsToUri(context: Context, uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val records = _callRecords.value
-                if (records.isEmpty()) {
-                    withContext(Dispatchers.Main) { _currentStatus.value = "没有可导出的记录" }
+                val phoneList = _phoneList.value
+                if (phoneList.isEmpty()) {
+                    withContext(Dispatchers.Main) { _currentStatus.value = "没有可导出的联系人" }
                     return@launch
                 }
                 context.contentResolver.openOutputStream(uri)?.use { os ->
+                    // Windows适配：BOM + UTF-8编码
                     os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
-                    val writer = java.io.OutputStreamWriter(os, Charsets.UTF_8)
-                    writer.write("电话号码,联系人姓名,通话状态,通话时长(秒),通话时间,录音文件\n")
-                    records.forEach { r ->
-                        writer.write("${r.phoneNumber},${r.contactName},${r.callStatus},${r.callDuration},${r.timestamp},${r.recordFilePath ?: ""}\n")
+                    val writer = OutputStreamWriter(os, Charsets.UTF_8)
+                    
+                    // CSV头部（使用逗号分隔，Windows Excel兼容）
+                    writer.write("\uFEFF") // BOM标记
+                    writer.write("姓名,手机号,余额,户号,拨打次数\r\n")
+                    
+                    // 写入联系人数据
+                    phoneList.forEach { entry ->
+                        val name = escapeCsvField(entry.contactName.ifEmpty { "未知" })
+                        val phone = escapeCsvField(entry.phoneNumber)
+                        val balance = escapeCsvField(entry.balance ?: "")
+                        val accountNumber = escapeCsvField(entry.accountNumber ?: "")
+                        val callCount = entry.callCount.toString()
+                        
+                        writer.write("$name,$phone,$balance,$accountNumber,$callCount\r\n")
                     }
-                    writer.write("\n统计信息\n$_statistics.value\n")
+                    
                     writer.flush()
                 }
-                withContext(Dispatchers.Main) { _currentStatus.value = "导出成功" }
+                withContext(Dispatchers.Main) { 
+                    _currentStatus.value = "导出成功，共 ${phoneList.size} 条记录"
+                }
             } catch (e: Exception) {
                 Log.e(tag, "导出失败: ${e.message}")
                 withContext(Dispatchers.Main) { _currentStatus.value = "导出失败: ${e.message}" }
             }
+        }
+    }
+    
+    private fun escapeCsvField(field: String): String {
+        // 如果字段包含逗号、引号或换行符，需要用引号包裹
+        return if (field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r")) {
+            "\"${field.replace("\"", "\"\"")}\"" // 转义引号
+        } else {
+            field
         }
     }
 
@@ -609,5 +712,64 @@ class AutoCallViewModel(application: Application) : AndroidViewModel(application
         audioInjector?.stop()
         audioRecorder?.release()
         stopAudioPlayback()
+        saveData()
+    }
+
+    @SuppressLint("UseKtx")
+    private fun saveData() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val gson = Gson()
+                // 保存电话列表
+                val phoneListJson = gson.toJson(_phoneList.value)
+                prefs.edit().putString("phone_list", phoneListJson).apply()
+                
+                // 保存通话记录
+                val recordsJson = gson.toJson(_callRecords.value)
+                prefs.edit().putString("call_records", recordsJson).apply()
+                
+                // 保存统计信息
+                prefs.edit().putString("statistics", _statistics.value).apply()
+            } catch (e: Exception) {
+                Log.e(tag, "保存数据失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun loadData() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val gson = Gson()
+                // 加载电话列表
+                val phoneListJson = prefs.getString("phone_list", null)
+                if (!phoneListJson.isNullOrEmpty()) {
+                    val type = object : TypeToken<List<PhoneEntry>>() {}.type
+                    val loadedList = gson.fromJson<List<PhoneEntry>>(phoneListJson, type)
+                    withContext(Dispatchers.Main) {
+                        _phoneList.value = loadedList
+                    }
+                }
+                
+                // 加载通话记录
+                val recordsJson = prefs.getString("call_records", null)
+                if (!recordsJson.isNullOrEmpty()) {
+                    val type = object : TypeToken<List<CallRecord>>() {}.type
+                    val loadedRecords = gson.fromJson<List<CallRecord>>(recordsJson, type)
+                    withContext(Dispatchers.Main) {
+                        _callRecords.value = loadedRecords
+                    }
+                }
+                
+                // 加载统计信息
+                val stats = prefs.getString("statistics", "")
+                if (!stats.isNullOrEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _statistics.value = stats
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "加载数据失败: ${e.message}")
+            }
+        }
     }
 }

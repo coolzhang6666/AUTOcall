@@ -13,7 +13,9 @@ data class PhoneEntry(
     val contactName: String = "",
     val audioFilePath: String? = null,
     val accountNumber: String? = null,
-    val balance: String? = null
+    val balance: String? = null,
+    val isCalled: Boolean = false,  // 是否已拨打
+    val callCount: Int = 0  // 拨打次数
 )
 
 /**

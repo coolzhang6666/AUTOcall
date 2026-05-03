@@ -1,6 +1,7 @@
 package com.example.autocall
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -25,9 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -73,17 +72,42 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AUTOCallTheme {
-                MainScreen(
-                    viewModel = viewModel,
-                    onImportFile = { openDocumentLauncher.launch("*/*") },
-                    onImportAudio = { importAudioLauncher.launch("audio/*") },
-                    onExport = {
-                        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                        exportLauncher.launch("call_records_$ts.csv")
-                    }
-                )
+                var showDisclaimer by remember { mutableStateOf(!isDisclaimerAccepted()) }
+                
+                if (showDisclaimer) {
+                    DisclaimerDialog(
+                        onAccept = {
+                            acceptDisclaimer()
+                            showDisclaimer = false
+                        },
+                        onDecline = {
+                            finish()
+                        }
+                    )
+                } else {
+                    MainScreen(
+                        viewModel = viewModel,
+                        onImportFile = { openDocumentLauncher.launch("*/*") },
+                        onImportAudio = { importAudioLauncher.launch("audio/*") },
+                        onExport = {
+                            val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                            exportLauncher.launch("call_records_$ts.csv")
+                        }
+                    )
+                }
             }
         }
+    }
+
+    private fun isDisclaimerAccepted(): Boolean {
+        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        return prefs.getBoolean("disclaimer_accepted", false)
+    }
+
+    @SuppressLint("UseKtx")
+    private fun acceptDisclaimer() {
+        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        prefs.edit().putBoolean("disclaimer_accepted", true).apply()
     }
 
     private fun checkAndRequestPermissions() {
@@ -132,6 +156,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("UseKtx")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -147,10 +172,10 @@ fun MainScreen(
     val progress by viewModel.progress.collectAsState()
     val selectedAudioIndex by viewModel.selectedAudioIndex.collectAsState()
     val statistics by viewModel.statistics.collectAsState()
-    val callRecords by viewModel.callRecords.collectAsState()
     val isRecordingEnabled by viewModel.isRecordingEnabled.collectAsState()
     val isAudioPlaybackEnabled by viewModel.isAudioPlaybackEnabled.collectAsState()
     val sortByBalance by viewModel.sortByBalance.collectAsState()
+    val sortByCallCount by viewModel.sortByCallCount.collectAsState()
 
     var showAboutDialog by remember { mutableStateOf(false) }
 
@@ -223,25 +248,87 @@ fun MainScreen(
                     fontWeight = FontWeight.Bold
                 )
 
-                // 余额排序按钮
-                if (phoneList.any { !it.balance.isNullOrEmpty() }) {
-                    val sortText = when (sortByBalance) {
-                        0 -> "按余额排序"
-                        1 -> "✓ 从小到大"
-                        2 -> "✓ 从大到小"
-                        else -> "按余额排序"
+                // 排序和清空按钮区域
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // 拨打次数排序按钮
+                    val callCountSortText = when (sortByCallCount) {
+                        0 -> "按拨打次数"
+                        1 -> "✓ 次数升序"
+                        2 -> "✓ 次数降序"
+                        else -> "按拨打次数"
                     }
                     FilterChip(
-                        selected = sortByBalance != 0,
-                        onClick = { viewModel.toggleSortByBalance() },
-                        label = { Text(sortText) },
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        selected = sortByCallCount != 0,
+                        onClick = { viewModel.toggleSortByCallCount() },
+                        label = { Text(callCountSortText, style = MaterialTheme.typography.bodySmall) },
+                        modifier = Modifier.weight(1f)
                     )
+
+                    // 余额排序按钮
+                    if (phoneList.any { !it.balance.isNullOrEmpty() }) {
+                        val sortText = when (sortByBalance) {
+                            0 -> "按余额"
+                            1 -> "✓ 余额升序"
+                            2 -> "✓ 余额降序"
+                            else -> "按余额"
+                        }
+                        FilterChip(
+                            selected = sortByBalance != 0,
+                            onClick = { viewModel.toggleSortByBalance() },
+                            label = { Text(sortText, style = MaterialTheme.typography.bodySmall) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    
+                    // 清空列表按钮
+                    if (phoneList.isNotEmpty()) {
+                        var showClearDialog by remember { mutableStateOf(false) }
+                        
+                        FilterChip(
+                            selected = false,
+                            onClick = { showClearDialog = true },
+                            label = { Text("🗑️ 清空", style = MaterialTheme.typography.bodySmall) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        
+                        if (showClearDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showClearDialog = false },
+                                title = { Text("确认清空") },
+                                text = { Text("确定要清空所有联系人吗？此操作不可恢复。") },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            viewModel.clearPhoneList()
+                                            showClearDialog = false
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.error
+                                        )
+                                    ) {
+                                        Text("确认清空")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showClearDialog = false }) {
+                                        Text("取消")
+                                    }
+                                }
+                            )
+                        }
+                    }
                 }
 
                 PhoneList(
                     phoneList = phoneList,
                     onPhoneClick = { entry ->
+                        viewModel.markAsCalledManually(entry.phoneNumber)
                         val intent = Intent(Intent.ACTION_CALL).apply {
                             data = Uri.parse("tel:${entry.phoneNumber}")
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -255,7 +342,7 @@ fun MainScreen(
                 }
             }
 
-            if (callRecords.isNotEmpty()) {
+            if (phoneList.isNotEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -270,14 +357,14 @@ fun MainScreen(
 
     if (showAboutDialog) {
         AlertDialog(
-            onDismissRequest = { showAboutDialog = false },
+            onDismissRequest = { },
             title = { Text("关于软件") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("自动电话拨打系统")
 
                     Text(
-                        text = "版本: 1.3.0",
+                        text = "版本: 2.0.0",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/coolzhang6666/AUTOcall"))
@@ -304,10 +391,108 @@ fun MainScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = { showAboutDialog = false }) { Text("确定") }
+                Button(onClick = { }) { Text("确定") }
             }
         )
     }
+}
+
+@Composable
+fun DisclaimerDialog(
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { },
+        title = { 
+            Text(
+                "⚠️ 重要声明与权限说明",
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.error
+            ) 
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 安全声明
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("🔒 安全声明", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text("• 本软件仅供学习研究使用", style = MaterialTheme.typography.bodySmall)
+                        Text("• 请勿用于任何非法用途", style = MaterialTheme.typography.bodySmall)
+                        Text("• 使用者需自行承担法律责任", style = MaterialTheme.typography.bodySmall)
+                        Text("• 开发者不对使用后果负责", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                // 核心限制提示
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("❗ 核心功能限制", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            "⚠️ 由于您的手机未ROOT，以下核心功能将无法使用：",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text("• 通话录音功能可能无法正常工作", style = MaterialTheme.typography.bodySmall)
+                        Text("• 音频注入（让对方听到语音）可能失败", style = MaterialTheme.typography.bodySmall)
+                        Text("• 部分Android系统会阻止应用访问通话音频通道", style = MaterialTheme.typography.bodySmall)
+                        Text("\n💡 建议：如需完整功能，请使用已ROOT的设备", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                // 权限说明
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("📋 所需权限说明", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("• CALL_PHONE：拨打电话功能", style = MaterialTheme.typography.bodySmall)
+                        Text("• READ_PHONE_STATE：监听通话状态", style = MaterialTheme.typography.bodySmall)
+                        Text("• RECORD_AUDIO：通话录音功能", style = MaterialTheme.typography.bodySmall)
+                        Text("• READ_MEDIA_AUDIO：读取音频文件", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                Text(
+                    "点击「我同意」表示您已阅读并理解以上内容",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onAccept,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text("我同意")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDecline) {
+                Text("拒绝", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    )
 }
 
 // ---------- 各组件（均无变动，仅 AudioSelector 有优化） ----------
@@ -455,7 +640,7 @@ fun AudioPlaybackSwitch(isEnabled: Boolean, onToggle: () -> Unit, currentStatus:
 @Composable
 fun ExportButton(onExport: () -> Unit) {
     Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
-        Text("导出通话记录")
+        Text("导出联系人列表")
     }
 }
 
@@ -518,7 +703,12 @@ fun PhoneList(phoneList: List<PhoneEntry>, onPhoneClick: (PhoneEntry) -> Unit = 
 fun PhoneItem(entry: PhoneEntry, onClick: () -> Unit = {}) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.cardColors(
+            containerColor = if (entry.isCalled) 
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            else 
+                MaterialTheme.colorScheme.surface
+        )
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -528,11 +718,31 @@ fun PhoneItem(entry: PhoneEntry, onClick: () -> Unit = {}) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     entry.contactName.ifEmpty { "未知联系人" },
-                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.titleSmall, 
+                    fontWeight = FontWeight.Bold,
+                    color = if (entry.isCalled) 
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    else 
+                        MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     entry.phoneNumber,
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary
+                    style = MaterialTheme.typography.bodyMedium, 
+                    color = if (entry.isCalled) 
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                    else 
+                        MaterialTheme.colorScheme.primary
+                )
+                
+                // 显示拨打状态
+                Text(
+                    if (entry.isCalled) "✓ 已拨打 (${entry.callCount}次)" else "○ 未拨打",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (entry.isCalled) 
+                        MaterialTheme.colorScheme.primary
+                    else 
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
                 
                 // 显示户号信息
@@ -540,7 +750,10 @@ fun PhoneItem(entry: PhoneEntry, onClick: () -> Unit = {}) {
                     Text(
                         "户号: ${entry.accountNumber}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (entry.isCalled) 
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        else 
+                            MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 
@@ -549,7 +762,10 @@ fun PhoneItem(entry: PhoneEntry, onClick: () -> Unit = {}) {
                     Text(
                         "余额: ${entry.balance}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = if (entry.isCalled) 
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                        else 
+                            MaterialTheme.colorScheme.primary
                     )
                 }
             }
