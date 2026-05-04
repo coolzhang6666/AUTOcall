@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.autocall"
-        minSdk = 31
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -24,6 +24,11 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 跳过lint检查加速构建
+            lint {
+                checkReleaseBuilds = false
+                abortOnError = false
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

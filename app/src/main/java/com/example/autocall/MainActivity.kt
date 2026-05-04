@@ -364,7 +364,7 @@ fun MainScreen(
                     Text("自动电话拨打系统")
 
                     Text(
-                        text = "版本: 2.0.0",
+                        text = "版本: 2.0.1",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/coolzhang6666/AUTOcall"))
@@ -391,7 +391,7 @@ fun MainScreen(
                 }
             },
             confirmButton = {
-                Button(onClick = { }) { Text("确定") }
+                Button(onClick = { showAboutDialog = false }) { Text("确定") }
             }
         )
     }
