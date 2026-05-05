@@ -5,7 +5,7 @@
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9%2B-purple)
 
 一款功能强大的Android自动电话拨打系统，支持Excel批量拨号、通话音频注入、通话录音等功能。
-本MD由AI 自动生成，请勿修改。
+本MD由AI 自动生成，请勿修改
 
 **GitHub**: https://github.com/coolzhang6666/AUTOcall
 
