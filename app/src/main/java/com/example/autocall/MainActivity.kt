@@ -392,17 +392,17 @@ fun MainScreen(
                     Text("自动电话拨打系统")
 
                     Text(
-                        text = "版本: 2.1.0",
+                        text = "版本: 2.1.1",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/coolzhang6666/AUTOcall"))
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/ZHCOOL520/AUTOcall"))
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             context.startActivity(intent)
                         }
                     )
 
                     Text(
-                        text = "开发者: coolzhang6666",
+                        text = "开发者: ZHCOOL520",
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://space.bilibili.com/1414910921?spm_id_from=333.1007.0.0"))

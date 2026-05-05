@@ -7,7 +7,7 @@
 一款功能强大的Android自动电话拨打系统，支持Excel批量拨号、通话音频注入、通话录音等功能。
 本MD由AI 自动生成，请勿修改
 
-**GitHub**: https://github.com/coolzhang6666/AUTOcall
+**GitHub**: https://github.com/ZHCOOL520/AUTOcall
 
 ---
 ## ✅ 核心功能
@@ -437,7 +437,7 @@ adb logcat | grep "❌"
 ## 🆕 支持与更新
 
 ### 获取最新版本
-- **GitHub Releases**: https://github.com/coolzhang6666/AUTOcall/releases
+- **GitHub Releases**: https://github.com/ZHCOOL520/AUTOcall/releases
 - **当前版本**: v2.1.0 (2026-05-06)
 - **更新频率**: 根据用户反馈和功能需求不定期更新
 
@@ -445,7 +445,7 @@ adb logcat | grep "❌"
 如果您遇到问题或有建议，请通过以下方式联系我们：
 
 1. **GitHub Issues**（推荐）
-   - 访问: https://github.com/coolzhang6666/AUTOcall/issues
+   - 访问: https://github.com/ZHCOOL520/AUTOcall/issues
    - 提交Bug报告或功能建议
    - 附上详细的错误日志和复现步骤
 
@@ -479,4 +479,4 @@ A: 可以！请在GitHub Issues中提出，我们会评估后考虑加入。
 
 ---
 
-**GitHub**: https://github.com/coolzhang6666/AUTOcall
+**GitHub**: https://github.com/ZHCOOL520/AUTOcall
